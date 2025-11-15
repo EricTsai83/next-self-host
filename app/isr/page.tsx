@@ -1,9 +1,9 @@
-import { revalidatePath } from 'next/cache';
-import { FreshnessTimer } from './timer';
+import { revalidatePath } from "next/cache";
+import { FreshnessTimer } from "./timer";
 
 async function revalidateAction() {
-  'use server';
-  revalidatePath('/isr');
+  "use server";
+  revalidatePath("/isr");
 }
 
 async function getPokemon() {
@@ -16,14 +16,14 @@ async function getPokemon() {
 
 export default async function ISRDemo() {
   const pokemon = await getPokemon();
-  const generatedAt = Date.now();
+  const generatedAt = new Date().getTime();
 
   return (
     <div>
       <h1>ISR Demo</h1>
       <p>Pokemon ID: {pokemon.id}</p>
       <p>Name: {pokemon.name}</p>
-      <p>Types: {pokemon.type.join(', ')}</p>
+      <p>Types: {pokemon.type.join(", ")}</p>
       <FreshnessTimer generatedAt={generatedAt} />
       <form action={revalidateAction}>
         <button type="submit">Revalidate</button>

@@ -1,11 +1,11 @@
-import Image from 'next/image';
-import { connection } from 'next/server';
+import Image from "next/image";
+import { connection } from "next/server";
 
 async function getPokemon() {
   await connection();
 
-  let apiKey = global.secrets.apiKey || 'None for demo';
-  let randomNumber = Math.floor(Math.random() * 100) + 1;
+  const apiKey = global.secrets.apiKey || "None for demo";
+  const randomNumber = Math.floor(Math.random() * 100) + 1;
 
   return await fetch(`https://api.vercel.app/pokemon/${randomNumber}`, {
     headers: {
@@ -15,15 +15,15 @@ async function getPokemon() {
 }
 
 export default async function Home() {
-  let secretKey = process.env.SECRET_KEY;
-  let pokemon = await getPokemon();
+  const secretKey = process.env.SECRET_KEY;
+  const pokemon = await getPokemon();
 
   return (
     <section>
       <h1>Next.js Self Hosted Demo</h1>
       <p>
         This is a demo of a Next.js application hosted on Ubuntu Linux. It also
-        includes a Postgres database and an Nginx proxy.{' '}
+        includes a Postgres database and an Nginx proxy.{" "}
         <a href="https://github.com/leerob/next-self-host">View the code</a>.
       </p>
 
@@ -43,7 +43,7 @@ export default async function Home() {
         alt="Coding"
       />
       <p>
-        Next.js supports image optimization out of the box with{' '}
+        Next.js supports image optimization out of the box with{" "}
         <code>next start</code>. The image above is using the default image
         optimization on the Next.js server.
       </p>
@@ -54,11 +54,11 @@ export default async function Home() {
       </p>
       <p>
         You can also bring your own custom image loader, if you would prefer to
-        use a different service. You can view an example{' '}
+        use a different service. You can view an example{" "}
         <a href="https://github.com/leerob/next-self-host/blob/main/image-loader.ts">
           here
         </a>
-        , which you can enable through{' '}
+        , which you can enable through{" "}
         <a href="https://github.com/leerob/next-self-host/blob/main/next.config.ts">
           <code>next.config.ts</code>
         </a>
@@ -92,7 +92,7 @@ export default async function Home() {
         This route reads and writes to our Postgres database, which is in its
         own Docker container. It uses Drizzle for the ORM. There is also a cron
         job that resets the demo data every 10 minutes. You can manually hit the
-        endpoint the cron uses by sending a <code>POST</code> to{' '}
+        endpoint the cron uses by sending a <code>POST</code> to{" "}
         <a href="https://nextselfhost.dev/db/clear">
           <code>/db/clear</code>
         </a>
@@ -113,20 +113,20 @@ export default async function Home() {
         recommended, but for this single container app it’s not necessary.
       </p>
       <p>
-        For this demo, we have a route that retrieves data with{' '}
-        <code>fetch</code> from an API, then adds a time-based{' '}
+        For this demo, we have a route that retrieves data with{" "}
+        <code>fetch</code> from an API, then adds a time-based{" "}
         <code>revalidate</code> time of 10 seconds. This indicates it will be
-        "fresh" for a maximum of that time. You can view the{' '}
+        &quot;fresh&quot; for a maximum of that time. You can view the{" "}
         <code>s-maxage=10, stale-while-revalidate=31536000</code> response
         header for the page.
       </p>
       <p>
         The default <code>stale-while-revalidate</code> time for static pages
         that do not specify a <code>revalidate</code> time is 1 year, however,
-        this can also be{' '}
+        this can also be{" "}
         <a href="https://nextjs.org/docs/canary/app/api-reference/next-config-js/swrDelta">
           configured
-        </a>{' '}
+        </a>{" "}
         with <code>swrDelta</code> in <code>next.config.ts</code>.
       </p>
       <p>
@@ -141,7 +141,7 @@ export default async function Home() {
       <h3>Middleware</h3>
       <p>
         The <code>/protected</code> route is protected by a cookie. You will be
-        redirected back to <code>/</code>. To view the route, add the{' '}
+        redirected back to <code>/</code>. To view the route, add the{" "}
         <code>protected=1</code> cookie in the browser.
       </p>
       <p>
@@ -154,7 +154,7 @@ export default async function Home() {
         It is not recommended to do checks like fetching user information from
         your database inside of Middleware. Instead, these checks should happen
         before queries or mutations. Checking for an auth cookie in Middleware
-        in the{' '}
+        in the{" "}
         <a href="https://nextjs.org/docs/app/building-your-application/authentication#protecting-routes-with-middleware">
           preferred pattern
         </a>
@@ -177,8 +177,9 @@ export default async function Home() {
       <p>
         This instrumentation file will be stabilized in Next.js 15. A common use
         case is reading secrets from remote locations like Vault or 1Password.
-        You can try this by setting the appropriate variables in your{' '}
-        <code>.env</code> file for Vault, though it's not required for the demo.
+        You can try this by setting the appropriate variables in your{" "}
+        <code>.env</code> file for Vault, though it&apos;s not required for the
+        demo.
       </p>
       <p>
         <a href="https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation">
@@ -188,7 +189,7 @@ export default async function Home() {
 
       <h3>Environment Variables</h3>
       <p>
-        Next.js supports loading environment variables from <code>.env</code>{' '}
+        Next.js supports loading environment variables from <code>.env</code>{" "}
         files.
       </p>
       <p>
@@ -198,7 +199,7 @@ export default async function Home() {
         same Docker image.
       </p>
       <p>
-        This value was read from <code>process.env</code>:{' '}
+        This value was read from <code>process.env</code>:{" "}
         <code>{secretKey}</code>
       </p>
       <p>
