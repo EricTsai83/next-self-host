@@ -242,56 +242,45 @@ jobs:
           # 驗證 SSH key 已載入
           ssh-add -l >/dev/null 2>&1 || { echo "Error: No SSH keys loaded in agent"; exit 1; }
 
-          # 構建遠端部署腳本內容
-          cat > /tmp/remote_deploy.sh <<'REMOTE_SCRIPT'
-          #!/bin/bash
-          set -euo pipefail
-
-          # 首次部署：若遠端沒有 deploy.sh，執行完整部署
-          if [ ! -f ~/deploy.sh ]; then
-            echo 'No existing deploy.sh found. First-time deploy.'
-            mv /tmp/deploy.sh.new ~/deploy.sh
-            chmod +x ~/deploy.sh
-            mv /tmp/update.sh.new ~/update.sh
-            chmod +x ~/update.sh
-            echo 'Running deploy.sh (first-time)...'
-            ~/deploy.sh
-            exit 0
-          fi
-
-          # 計算 checksum 以決定使用 deploy.sh 或 update.sh
-          OLD_SUM=$(sha256sum ~/deploy.sh | awk '{print $1}')
-          NEW_SUM=$(sha256sum /tmp/deploy.sh.new | awk '{print $1}')
-
-          echo "Existing deploy.sh checksum: $OLD_SUM"
-          echo "New deploy.sh checksum:      $NEW_SUM"
-
-          # 無論如何，先把 update.sh 更新為新版
-          mv /tmp/update.sh.new ~/update.sh
-          chmod +x ~/update.sh
-
-          if [ "$OLD_SUM" = "$NEW_SUM" ]; then
-            echo 'deploy.sh unchanged. Running update.sh...'
-            chmod +x ~/deploy.sh
-            ~/update.sh
-          else
-            echo 'deploy.sh changed. Replacing and running deploy.sh...'
-            mv /tmp/deploy.sh.new ~/deploy.sh
-            chmod +x ~/deploy.sh
-            ~/deploy.sh
-          fi
-          REMOTE_SCRIPT
-
-          # 上傳遠端部署腳本並執行
-          scp -P "${SSH_PORT}" \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=~/.ssh/known_hosts \
-              /tmp/remote_deploy.sh \
-              "${SSH_USER}@${SSH_HOST}:/tmp/remote_deploy.sh"
-
-          # 執行遠端部署腳本
+          # 執行遠端部署邏輯（直接執行，無需額外腳本文件）
           ssh -p "${SSH_PORT}" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=~/.ssh/known_hosts \
               "${SSH_USER}@${SSH_HOST}" \
-              "bash /tmp/remote_deploy.sh"
+              bash -lc "
+            set -euo pipefail
+
+            # 首次部署：若遠端沒有 deploy.sh，執行完整部署
+            if [ ! -f ~/deploy.sh ]; then
+              echo 'No existing deploy.sh found. First-time deploy.'
+              mv /tmp/deploy.sh.new ~/deploy.sh
+              chmod +x ~/deploy.sh
+              mv /tmp/update.sh.new ~/update.sh
+              chmod +x ~/update.sh
+              echo 'Running deploy.sh (first-time)...'
+              ~/deploy.sh
+              exit 0
+            fi
+
+            # 計算 checksum 以決定使用 deploy.sh 或 update.sh
+            OLD_SUM=\$(sha256sum ~/deploy.sh | awk '{print \$1}')
+            NEW_SUM=\$(sha256sum /tmp/deploy.sh.new | awk '{print \$1}')
+
+            echo \"Existing deploy.sh checksum: \$OLD_SUM\"
+            echo \"New deploy.sh checksum:      \$NEW_SUM\"
+
+            # 無論如何，先把 update.sh 更新為新版
+            mv /tmp/update.sh.new ~/update.sh
+            chmod +x ~/update.sh
+
+            if [ \"\$OLD_SUM\" = \"\$NEW_SUM\" ]; then
+              echo 'deploy.sh unchanged. Running update.sh...'
+              chmod +x ~/deploy.sh
+              ~/update.sh
+            else
+              echo 'deploy.sh changed. Replacing and running deploy.sh...'
+              mv /tmp/deploy.sh.new ~/deploy.sh
+              chmod +x ~/deploy.sh
+              ~/deploy.sh
+            fi
+          "
