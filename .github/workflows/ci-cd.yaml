@@ -1,0 +1,143 @@
+name: CI
+
+# 觸發條件：任何分支 push 都會跑 build；只有 main 會跑 deploy
+on:
+  push:
+    branches:
+      - "**" # 萬用字元，表示所有分支
+
+# 全域環境變數（可視需要調整）
+env:
+  # 你的主要分支名稱（只在此分支才會部署）
+  DEPLOY_BRANCH: main
+
+jobs:
+  # 1) 建置與檢查（所有分支都會執行）
+  build:
+    runs-on: blacksmith-4vcpu-ubuntu-2404 # 原設定:ubuntu-latest
+    steps:
+      - name: Checkout # 取得程式碼
+        uses: actions/checkout@v5 # https://github.com/actions/checkout
+
+      - name: Install Bun # 安裝 Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Package # 安裝套件
+        run: bun install
+
+      - name: Copy .env.example files # 尋找專案內所有名為 .env.example 的檔案，並複製成對應的 .env
+        shell: bash
+        run: find . -type f -name ".env.example" -exec sh -c 'cp "$1" "${1%.*}"' _ {} \;
+
+      - name: Lint # 程式碼檢查（Lint）
+        run: bun lint
+
+      - name: 建置（Build）
+        run: bun run build
+
+  # 2) 部署（僅 main 分支觸發；需 build 成功）
+  deploy:
+    if: github.ref == format('refs/heads/{0}', env.DEPLOY_BRANCH) # 只在 main 分支部署
+    needs: build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    env:
+      SSH_USER: ${{ vars.VAR_SSH_USER }} # 例如 root
+      SSH_PORT: ${{ vars.VAR_SSH_PORT }} # 例如 22
+      SSH_HOST: ${{ secrets.SSH_HOST }} # IP/域名放在 Secrets
+      DEPLOY_SCRIPT_PATH: ./deploy.sh # repo 內 deploy.sh 路徑（預設根目錄）
+      UPDATE_SCRIPT_PATH: ./update.sh # repo 內 update.sh 路徑（預設根目錄）
+
+    steps:
+      - name: Checkout repo (to get deploy.sh and update.sh of this commit)
+        uses: actions/checkout@v5
+
+      - name: Prepare SSH key (with passphrase via agent)
+        shell: bash
+        env:
+          SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy_enc
+          chmod 600 ~/.ssh/id_deploy_enc
+
+          eval "$(ssh-agent -s)"
+
+          # 非互動提供 passphrase
+          cat > ~/.ssh/askpass.sh <<'EOS'
+          #!/usr/bin/env bash
+          echo "$SSH_KEY_PASSPHRASE"
+          EOS
+          chmod +x ~/.ssh/askpass.sh
+          export SSH_ASKPASS=~/.ssh/askpass.sh
+          export DISPLAY=:0
+
+          # 無 TTY 載入私鑰
+          setsid ssh-add ~/.ssh/id_deploy_enc </dev/null
+
+          # 綁定 host 指紋
+          ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Validate local scripts exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f "${DEPLOY_SCRIPT_PATH}" ] || { echo "deploy.sh not found at ${DEPLOY_SCRIPT_PATH}"; exit 1; }
+          [ -f "${UPDATE_SCRIPT_PATH}" ] || { echo "update.sh not found at ${UPDATE_SCRIPT_PATH}"; exit 1; }
+
+      - name: Upload scripts to remote (staging paths)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 上傳到遠端暫存路徑，避免直接覆蓋舊檔造成中斷
+          scp -P "${SSH_PORT}" "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/deploy.sh.new"
+          scp -P "${SSH_PORT}" "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/update.sh.new"
+          # 設定執行權限
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "chmod +x /tmp/deploy.sh.new /tmp/update.sh.new || true"
+
+      - name: Remote deploy with checksum decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" bash -lc "
+            set -euo pipefail
+
+            # 若遠端沒有 deploy.sh，視為首次部署：移入新檔並執行 deploy.sh
+            if [ ! -f ~/deploy.sh ]; then
+              echo 'No existing deploy.sh found. First-time deploy.'
+              mv /tmp/deploy.sh.new ~/deploy.sh
+              chmod +x ~/deploy.sh
+              mv /tmp/update.sh.new ~/update.sh
+              chmod +x ~/update.sh
+              echo 'Running deploy.sh (first-time)...'
+              ~/deploy.sh
+              exit 0
+            fi
+
+            # 有舊 deploy.sh：計算舊檔與新檔的 checksum
+            OLD_SUM=\$(sha256sum ~/deploy.sh | awk '{print \$1}')
+            NEW_SUM=\$(sha256sum /tmp/deploy.sh.new | awk '{print \$1}')
+
+            echo \"Existing deploy.sh checksum: \$OLD_SUM\"
+            echo \"New deploy.sh checksum:      \$NEW_SUM\"
+
+            # 無論如何，先把 update.sh 更新為新版
+            mv /tmp/update.sh.new ~/update.sh
+            chmod +x ~/update.sh
+
+            if [ \"\$OLD_SUM\" = \"\$NEW_SUM\" ]; then
+              echo 'deploy.sh unchanged. Running update.sh...'
+              # 仍確保 deploy.sh 可執行
+              chmod +x ~/deploy.sh
+              ~/update.sh
+            else
+              echo 'deploy.sh changed. Replacing and running deploy.sh...'
+              mv /tmp/deploy.sh.new ~/deploy.sh
+              chmod +x ~/deploy.sh
+              ~/deploy.sh
+            fi
+          "
