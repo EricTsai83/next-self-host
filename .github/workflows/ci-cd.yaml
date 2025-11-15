@@ -7,7 +7,7 @@ on:
 jobs:
   # 1) 建置與檢查（所有分支都會執行）
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2404 # 原設定:ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout # 取得程式碼
         uses: actions/checkout@v5 # https://github.com/actions/checkout
@@ -34,7 +34,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main' # 只在 main 分支部署
     needs: build
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
 
     env:
       SSH_USER: ${{ vars.VAR_SSH_USER }} # 例如 root
