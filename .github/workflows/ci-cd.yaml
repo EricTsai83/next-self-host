@@ -60,17 +60,23 @@ jobs:
 
           eval "$(ssh-agent -s)"
 
-          # 非互動提供 passphrase
-          cat > ~/.ssh/askpass.sh <<'EOS'
-          #!/usr/bin/env bash
-          echo "$SSH_KEY_PASSPHRASE"
-          EOS
-          chmod +x ~/.ssh/askpass.sh
-          export SSH_ASKPASS=~/.ssh/askpass.sh
-          export DISPLAY=:0
+          # 安裝 expect（用於非互動式提供 passphrase）
+          sudo apt-get update -qq && sudo apt-get install -y -qq expect
 
-          # 無 TTY 載入私鑰
-          setsid ssh-add ~/.ssh/id_deploy_enc </dev/null
+          # 使用 expect 腳本載入私鑰
+          expect <<EOF
+          spawn ssh-add ~/.ssh/id_deploy_enc
+          expect {
+            "Enter passphrase" { send "$SSH_KEY_PASSPHRASE\r"; exp_continue }
+            "passphrase" { send "$SSH_KEY_PASSPHRASE\r"; exp_continue }
+            eof
+          }
+          catch wait result
+          exit [lindex \$result 3]
+          EOF
+
+          # 驗證 key 是否成功載入
+          ssh-add -l || { echo "Failed to load SSH key"; exit 1; }
 
           # 綁定 host 指紋
           ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
