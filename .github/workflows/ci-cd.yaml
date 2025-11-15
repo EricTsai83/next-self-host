@@ -55,17 +55,21 @@ jobs:
           set -euo pipefail
 
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy_enc
-          chmod 600 ~/.ssh/id_deploy_enc
+          SSH_KEY_PATH="$HOME/.ssh/id_deploy_enc"
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$SSH_KEY_PATH"
+          chmod 600 "$SSH_KEY_PATH"
+
+          # 驗證檔案已建立
+          [ -f "$SSH_KEY_PATH" ] || { echo "Failed to create SSH key file"; exit 1; }
 
           eval "$(ssh-agent -s)"
 
           # 安裝 expect（用於非互動式提供 passphrase）
           sudo apt-get update -qq && sudo apt-get install -y -qq expect
 
-          # 使用 expect 腳本載入私鑰
+          # 使用 expect 腳本載入私鑰（使用絕對路徑）
           expect <<EOF
-          spawn ssh-add ~/.ssh/id_deploy_enc
+          spawn ssh-add "$SSH_KEY_PATH"
           expect {
             "Enter passphrase" { send "$SSH_KEY_PASSPHRASE\r"; exp_continue }
             "passphrase" { send "$SSH_KEY_PASSPHRASE\r"; exp_continue }
