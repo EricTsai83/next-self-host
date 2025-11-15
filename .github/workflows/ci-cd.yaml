@@ -188,14 +188,14 @@ jobs:
           fi
 
           # 使用 ssh-agent 中的密鑰（不需要 -i 選項）
-          SSH_OPTS="-p ${SSH_PORT} -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts -o IdentitiesOnly=yes"
+          SSH_OPTS=(-p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts -o IdentitiesOnly=yes)
 
           echo "Uploading scripts to remote server..."
           # 上傳到遠端暫存路徑，避免直接覆蓋舊檔造成中斷
-          scp ${SSH_OPTS} "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/deploy.sh.new"
-          scp ${SSH_OPTS} "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/update.sh.new"
+          scp "${SSH_OPTS[@]}" "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/deploy.sh.new"
+          scp "${SSH_OPTS[@]}" "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/update.sh.new"
           # 設定執行權限
-          ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" "chmod +x /tmp/deploy.sh.new /tmp/update.sh.new || true"
+          ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "chmod +x /tmp/deploy.sh.new /tmp/update.sh.new || true"
 
       - name: Remote deploy with checksum decision
         shell: bash
@@ -217,9 +217,9 @@ jobs:
           fi
 
           # 使用 ssh-agent 中的密鑰
-          SSH_OPTS="-p ${SSH_PORT} -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts -o IdentitiesOnly=yes"
+          SSH_OPTS=(-p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts -o IdentitiesOnly=yes)
 
-          ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" bash -lc "
+          ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" bash -lc "
             set -euo pipefail
 
             # 若遠端沒有 deploy.sh，視為首次部署：移入新檔並執行 deploy.sh
