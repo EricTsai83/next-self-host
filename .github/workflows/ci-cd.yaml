@@ -60,26 +60,62 @@ jobs:
         run: |
           set -euo pipefail
 
+          # 創建 .ssh 目錄
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy_enc
-          chmod 600 ~/.ssh/id_deploy_enc
+
+          # 寫入 SSH 私鑰文件
+          echo "Writing SSH private key to ~/.ssh/id_deploy_enc..."
+          KEY_FILE=~/.ssh/id_deploy_enc
+          # 將私鑰寫入文件（使用環境變數避免 heredoc 格式問題）
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+
+          # 驗證文件是否成功創建
+          if [ ! -f "$KEY_FILE" ]; then
+            echo "Error: SSH key file was not created at $KEY_FILE"
+            exit 1
+          fi
+
+          # 檢查文件大小（不應該為空）
+          FILE_SIZE=$(stat -f%z "$KEY_FILE" 2>/dev/null || stat -c%s "$KEY_FILE" 2>/dev/null || echo "0")
+          if [ "$FILE_SIZE" -eq 0 ]; then
+            echo "Error: SSH key file is empty. Check if SSH_PRIVATE_KEY secret is set correctly."
+            exit 1
+          fi
+
+          echo "SSH key file created successfully (size: $FILE_SIZE bytes)"
 
           # 綁定 host 指紋
-          ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+          echo "Scanning SSH host key..."
+          ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts 2>&1 || true
           chmod 644 ~/.ssh/known_hosts
 
           # 啟動 ssh-agent 並保存環境變數到文件，以便後續步驟使用
+          echo "Starting ssh-agent..."
           eval "$(ssh-agent -s)"
           echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> $GITHUB_ENV
           echo "SSH_AGENT_PID=${SSH_AGENT_PID}" >> $GITHUB_ENV
+          echo "SSH key file path: $KEY_FILE"
+
+          # 驗證文件路徑（使用絕對路徑）
+          ABS_KEY_FILE=$(realpath "$KEY_FILE" || echo "$HOME/.ssh/id_deploy_enc")
+          echo "Absolute key file path: $ABS_KEY_FILE"
 
           # 使用 expect 腳本來處理 passphrase
           echo "Adding SSH key to agent using expect..."
-          expect <<EOF
+          expect <<EXPECTEOF
             set timeout 10
             set passphrase "$SSH_KEY_PASSPHRASE"
-            spawn ssh-add ~/.ssh/id_deploy_enc
+            set key_file "$ABS_KEY_FILE"
+            
+            # 驗證文件存在
+            if {![file exists \$key_file]} {
+              puts "Error: Key file does not exist: \$key_file"
+              exit 1
+            }
+            
+            spawn ssh-add "\$key_file"
             expect {
               "Enter passphrase" {
                 send "\$passphrase\r"
@@ -96,6 +132,10 @@ jobs:
                 puts "Error: Could not connect to ssh-agent"
                 exit 1
               }
+              "No such file or directory" {
+                puts "Error: Key file not found: \$key_file"
+                exit 1
+              }
               timeout {
                 puts "Error: Timeout waiting for passphrase prompt"
                 exit 1
@@ -108,7 +148,7 @@ jobs:
               puts "Error: ssh-add exited with code \$exit_code"
               exit \$exit_code
             }
-          EOF
+          EXPECTEOF
 
           # 驗證密鑰是否已載入
           echo "Checking loaded SSH keys:"
