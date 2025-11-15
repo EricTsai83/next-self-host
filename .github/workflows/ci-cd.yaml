@@ -47,6 +47,12 @@ jobs:
       - name: Checkout repo (to get deploy.sh and update.sh of this commit)
         uses: actions/checkout@v5
 
+      - name: Install expect (for SSH passphrase handling)
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y expect
+
       - name: Prepare SSH key (with passphrase via agent)
         shell: bash
         env:
@@ -55,25 +61,65 @@ jobs:
           set -euo pipefail
 
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy_enc
           chmod 600 ~/.ssh/id_deploy_enc
 
-          eval "$(ssh-agent -s)"
-
-          # 非互動提供 passphrase
-          cat > ~/.ssh/askpass.sh <<'EOS'
-          #!/usr/bin/env bash
-          echo "$SSH_KEY_PASSPHRASE"
-          EOS
-          chmod +x ~/.ssh/askpass.sh
-          export SSH_ASKPASS=~/.ssh/askpass.sh
-          export DISPLAY=:0
-
-          # 無 TTY 載入私鑰
-          setsid ssh-add ~/.ssh/id_deploy_enc </dev/null
-
           # 綁定 host 指紋
           ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+          # 啟動 ssh-agent 並保存環境變數到文件，以便後續步驟使用
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> $GITHUB_ENV
+          echo "SSH_AGENT_PID=${SSH_AGENT_PID}" >> $GITHUB_ENV
+
+          # 使用 expect 腳本來處理 passphrase
+          echo "Adding SSH key to agent using expect..."
+          expect <<EOF
+            set timeout 10
+            set passphrase "$SSH_KEY_PASSPHRASE"
+            spawn ssh-add ~/.ssh/id_deploy_enc
+            expect {
+              "Enter passphrase" {
+                send "\$passphrase\r"
+                exp_continue
+              }
+              "Identity added" {
+                puts "Key added successfully"
+              }
+              "Bad passphrase" {
+                puts "Error: Bad passphrase"
+                exit 1
+              }
+              "Could not open a connection" {
+                puts "Error: Could not connect to ssh-agent"
+                exit 1
+              }
+              timeout {
+                puts "Error: Timeout waiting for passphrase prompt"
+                exit 1
+              }
+              eof
+            }
+            catch wait result
+            set exit_code [lindex \$result 3]
+            if {\$exit_code != 0} {
+              puts "Error: ssh-add exited with code \$exit_code"
+              exit \$exit_code
+            }
+          EOF
+
+          # 驗證密鑰是否已載入
+          echo "Checking loaded SSH keys:"
+          if ssh-add -l >/dev/null 2>&1; then
+            echo "✓ SSH key successfully loaded into agent"
+            ssh-add -l
+          else
+            echo "✗ No keys loaded in agent - authentication may fail"
+            echo "This usually means the passphrase was incorrect or the key format is invalid"
+            exit 1
+          fi
 
       - name: Validate local scripts exist
         shell: bash
@@ -86,17 +132,54 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # 確保 ssh-agent 環境變數已設置
+          if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+            export SSH_AUTH_SOCK
+          fi
+          if [ -n "${SSH_AGENT_PID:-}" ]; then
+            export SSH_AGENT_PID
+          fi
+
+          # 驗證 ssh-agent 中有密鑰
+          if ! ssh-add -l >/dev/null 2>&1; then
+            echo "Error: No SSH keys loaded in agent. Previous step must have failed."
+            exit 1
+          fi
+
+          # 使用 ssh-agent 中的密鑰（不需要 -i 選項）
+          SSH_OPTS="-p ${SSH_PORT} -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts -o IdentitiesOnly=yes"
+
+          echo "Uploading scripts to remote server..."
           # 上傳到遠端暫存路徑，避免直接覆蓋舊檔造成中斷
-          scp -P "${SSH_PORT}" "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/deploy.sh.new"
-          scp -P "${SSH_PORT}" "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/update.sh.new"
+          scp ${SSH_OPTS} "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/deploy.sh.new"
+          scp ${SSH_OPTS} "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/update.sh.new"
           # 設定執行權限
-          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "chmod +x /tmp/deploy.sh.new /tmp/update.sh.new || true"
+          ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" "chmod +x /tmp/deploy.sh.new /tmp/update.sh.new || true"
 
       - name: Remote deploy with checksum decision
         shell: bash
         run: |
           set -euo pipefail
-          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" bash -lc "
+
+          # 確保 ssh-agent 環境變數已設置
+          if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+            export SSH_AUTH_SOCK
+          fi
+          if [ -n "${SSH_AGENT_PID:-}" ]; then
+            export SSH_AGENT_PID
+          fi
+
+          # 驗證 ssh-agent 中有密鑰
+          if ! ssh-add -l >/dev/null 2>&1; then
+            echo "Error: No SSH keys loaded in agent. Previous step must have failed."
+            exit 1
+          fi
+
+          # 使用 ssh-agent 中的密鑰
+          SSH_OPTS="-p ${SSH_PORT} -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts -o IdentitiesOnly=yes"
+
+          ssh ${SSH_OPTS} "${SSH_USER}@${SSH_HOST}" bash -lc "
             set -euo pipefail
 
             # 若遠端沒有 deploy.sh，視為首次部署：移入新檔並執行 deploy.sh
