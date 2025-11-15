@@ -5,69 +5,76 @@ on:
   push: # 不指定 branches 表示匹配所有分支
 
 jobs:
-  # 1) 建置與檢查（所有分支都會執行）
+  # ============================================
+  # Job 1: 建置與檢查（所有分支都會執行）
+  # ============================================
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout # 取得程式碼
-        uses: actions/checkout@v5 # https://github.com/actions/checkout
+      - name: Checkout
+        uses: actions/checkout@v5
 
-      - name: Install Bun # 安裝 Bun
+      - name: Install Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Install Package # 安裝套件
+      - name: Install Dependencies
         run: bun install
 
-      - name: Copy .env.example files # 尋找專案內所有名為 .env.example 的檔案，並複製成對應的 .env
+      - name: Setup Environment Files
         shell: bash
-        run: find . -type f -name ".env.example" -exec sh -c 'cp "$1" "${1%.*}"' _ {} \;
+        run: |
+          find . -type f -name ".env.example" -exec sh -c 'cp "$1" "${1%.*}"' _ {} \;
 
-      - name: Lint # 程式碼檢查（Lint）
+      - name: Run Linter
         run: bun lint
 
-      - name: 建置（Build）
+      - name: Build Application
         run: bun run build
 
-  # 2) 部署（僅 main 分支觸發；需 build 成功）
+  # ============================================
+  # Job 2: 部署（僅 main 分支觸發；需 build 成功）
+  # ============================================
   deploy:
-    if: github.ref == 'refs/heads/main' # 只在 main 分支部署
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
 
     env:
-      SSH_USER: ${{ vars.VAR_SSH_USER }} # 例如 root
-      SSH_PORT: ${{ vars.VAR_SSH_PORT }} # 例如 22
-      SSH_HOST: ${{ secrets.SSH_HOST }} # IP/域名放在 Secrets
-      DEPLOY_SCRIPT_PATH: ./deploy.sh # repo 內 deploy.sh 路徑（預設根目錄）
-      UPDATE_SCRIPT_PATH: ./update.sh # repo 內 update.sh 路徑（預設根目錄）
+      SSH_USER: ${{ vars.VAR_SSH_USER }}
+      SSH_PORT: ${{ vars.VAR_SSH_PORT }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      DEPLOY_SCRIPT_PATH: ./deploy.sh
+      UPDATE_SCRIPT_PATH: ./update.sh
 
     steps:
-      - name: Checkout repo (to get deploy.sh and update.sh of this commit)
+      # --- 準備階段 ---
+      - name: Checkout Repository
         uses: actions/checkout@v5
 
-      - name: Install expect (for SSH passphrase handling)
+      - name: Install Required Tools
         shell: bash
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y expect
 
-      - name: Prepare SSH key (with passphrase via agent)
+      # --- SSH 設定階段 ---
+      - name: Setup SSH Directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+      - name: Write SSH Private Key
         shell: bash
         env:
           SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
         run: |
           set -euo pipefail
 
-          # 創建 .ssh 目錄
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          # 寫入 SSH 私鑰文件
-          echo "Writing SSH private key to ~/.ssh/id_deploy_enc..."
           KEY_FILE=~/.ssh/id_deploy_enc
-          # 將私鑰寫入文件（使用環境變數避免 heredoc 格式問題）
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
 
@@ -86,30 +93,36 @@ jobs:
 
           echo "SSH key file created successfully (size: $FILE_SIZE bytes)"
 
-          # 綁定 host 指紋
-          echo "Scanning SSH host key..."
+      - name: Add SSH Host to Known Hosts
+        shell: bash
+        run: |
+          set -euo pipefail
           ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts 2>&1 || true
           chmod 644 ~/.ssh/known_hosts
 
-          # 啟動 ssh-agent 並保存環境變數到文件，以便後續步驟使用
-          echo "Starting ssh-agent..."
+      - name: Start SSH Agent
+        shell: bash
+        run: |
+          set -euo pipefail
           eval "$(ssh-agent -s)"
           echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> $GITHUB_ENV
           echo "SSH_AGENT_PID=${SSH_AGENT_PID}" >> $GITHUB_ENV
-          echo "SSH key file path: $KEY_FILE"
 
-          # 驗證文件路徑（使用絕對路徑）
+      - name: Add SSH Key to Agent
+        shell: bash
+        env:
+          SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          KEY_FILE=~/.ssh/id_deploy_enc
           ABS_KEY_FILE=$(realpath "$KEY_FILE" || echo "$HOME/.ssh/id_deploy_enc")
-          echo "Absolute key file path: $ABS_KEY_FILE"
 
-          # 使用 expect 腳本來處理 passphrase
-          echo "Adding SSH key to agent using expect..."
           expect <<EXPECTEOF
             set timeout 10
             set passphrase "$SSH_KEY_PASSPHRASE"
             set key_file "$ABS_KEY_FILE"
             
-            # 驗證文件存在
             if {![file exists \$key_file]} {
               puts "Error: Key file does not exist: \$key_file"
               exit 1
@@ -150,8 +163,10 @@ jobs:
             }
           EXPECTEOF
 
-          # 驗證密鑰是否已載入
-          echo "Checking loaded SSH keys:"
+      - name: Verify SSH Key Loaded
+        shell: bash
+        run: |
+          set -euo pipefail
           if ssh-add -l >/dev/null 2>&1; then
             echo "✓ SSH key successfully loaded into agent"
             ssh-add -l
@@ -161,152 +176,122 @@ jobs:
             exit 1
           fi
 
-      - name: Validate local scripts exist
+      # --- 驗證階段 ---
+      - name: Validate Deployment Scripts Exist
         shell: bash
         run: |
           set -euo pipefail
           [ -f "${DEPLOY_SCRIPT_PATH}" ] || { echo "deploy.sh not found at ${DEPLOY_SCRIPT_PATH}"; exit 1; }
           [ -f "${UPDATE_SCRIPT_PATH}" ] || { echo "update.sh not found at ${UPDATE_SCRIPT_PATH}"; exit 1; }
 
-      - name: Upload scripts to remote (staging paths)
+      # --- 部署階段 ---
+      - name: Upload Scripts to Remote Server
         shell: bash
         run: |
           set -euo pipefail
 
           # 確保 ssh-agent 環境變數已設置
-          if [ -n "${SSH_AUTH_SOCK:-}" ]; then
-            export SSH_AUTH_SOCK
-          fi
-          if [ -n "${SSH_AGENT_PID:-}" ]; then
-            export SSH_AGENT_PID
-          fi
+          export SSH_AUTH_SOCK="${SSH_AUTH_SOCK}"
+          export SSH_AGENT_PID="${SSH_AGENT_PID}"
 
           # 驗證必要的環境變數
-          if [ -z "${SSH_PORT:-}" ]; then
-            echo "Error: SSH_PORT is not set"
-            exit 1
-          fi
-          if [ -z "${SSH_USER:-}" ]; then
-            echo "Error: SSH_USER is not set"
-            exit 1
-          fi
-          if [ -z "${SSH_HOST:-}" ]; then
-            echo "Error: SSH_HOST is not set"
-            exit 1
-          fi
+          [ -n "${SSH_PORT}" ] || { echo "Error: SSH_PORT is not set"; exit 1; }
+          [ -n "${SSH_USER}" ] || { echo "Error: SSH_USER is not set"; exit 1; }
+          [ -n "${SSH_HOST}" ] || { echo "Error: SSH_HOST is not set"; exit 1; }
+          [ -n "${SSH_AUTH_SOCK}" ] || { echo "Error: SSH_AUTH_SOCK is not set"; exit 1; }
 
-          # 驗證 ssh-agent 環境變數和密鑰
-          echo "Checking SSH_AUTH_SOCK: ${SSH_AUTH_SOCK:-not set}"
-          echo "Checking SSH_AGENT_PID: ${SSH_AGENT_PID:-not set}"
+          # 驗證 SSH key 已載入
+          ssh-add -l >/dev/null 2>&1 || { echo "Error: No SSH keys loaded in agent"; exit 1; }
 
-          if [ -z "${SSH_AUTH_SOCK:-}" ]; then
-            echo "Error: SSH_AUTH_SOCK is not set. ssh-agent may not be running."
-            exit 1
-          fi
-
-          if ! ssh-add -l >/dev/null 2>&1; then
-            echo "Error: No SSH keys loaded in agent. Previous step must have failed."
-            echo "Attempting to list keys:"
-            ssh-add -l || true
-            exit 1
-          fi
-
-          echo "SSH keys loaded in agent:"
-          ssh-add -l
-
-          echo "Uploading scripts to remote server..."
           # 上傳到遠端暫存路徑，避免直接覆蓋舊檔造成中斷
-          # 直接使用選項，避免陣列展開問題
-          # 注意：scp 使用 -P（大寫）指定端口，ssh 使用 -p（小寫）指定端口
-          # 移除 IdentitiesOnly=yes 以允許使用 ssh-agent 中的密鑰
-          scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/deploy.sh.new"
-          scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:/tmp/update.sh.new"
-          # 設定執行權限
-          ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts "${SSH_USER}@${SSH_HOST}" "chmod +x /tmp/deploy.sh.new /tmp/update.sh.new || true"
+          echo "Uploading scripts to remote server..."
+          scp -P "${SSH_PORT}" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              "${DEPLOY_SCRIPT_PATH}" \
+              "${SSH_USER}@${SSH_HOST}:/tmp/deploy.sh.new"
 
-      - name: Remote deploy with checksum decision
+          scp -P "${SSH_PORT}" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              "${UPDATE_SCRIPT_PATH}" \
+              "${SSH_USER}@${SSH_HOST}:/tmp/update.sh.new"
+
+          # 設定執行權限
+          ssh -p "${SSH_PORT}" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              "${SSH_USER}@${SSH_HOST}" \
+              "chmod +x /tmp/deploy.sh.new /tmp/update.sh.new || true"
+
+      - name: Execute Remote Deployment
         shell: bash
         run: |
           set -euo pipefail
 
           # 確保 ssh-agent 環境變數已設置
-          if [ -n "${SSH_AUTH_SOCK:-}" ]; then
-            export SSH_AUTH_SOCK
-          fi
-          if [ -n "${SSH_AGENT_PID:-}" ]; then
-            export SSH_AGENT_PID
-          fi
+          export SSH_AUTH_SOCK="${SSH_AUTH_SOCK}"
+          export SSH_AGENT_PID="${SSH_AGENT_PID}"
 
           # 驗證必要的環境變數
-          if [ -z "${SSH_PORT:-}" ]; then
-            echo "Error: SSH_PORT is not set"
-            exit 1
-          fi
-          if [ -z "${SSH_USER:-}" ]; then
-            echo "Error: SSH_USER is not set"
-            exit 1
-          fi
-          if [ -z "${SSH_HOST:-}" ]; then
-            echo "Error: SSH_HOST is not set"
-            exit 1
-          fi
+          [ -n "${SSH_PORT}" ] || { echo "Error: SSH_PORT is not set"; exit 1; }
+          [ -n "${SSH_USER}" ] || { echo "Error: SSH_USER is not set"; exit 1; }
+          [ -n "${SSH_HOST}" ] || { echo "Error: SSH_HOST is not set"; exit 1; }
+          [ -n "${SSH_AUTH_SOCK}" ] || { echo "Error: SSH_AUTH_SOCK is not set"; exit 1; }
 
-          # 驗證 ssh-agent 環境變數和密鑰
-          echo "Checking SSH_AUTH_SOCK: ${SSH_AUTH_SOCK:-not set}"
-          echo "Checking SSH_AGENT_PID: ${SSH_AGENT_PID:-not set}"
+          # 驗證 SSH key 已載入
+          ssh-add -l >/dev/null 2>&1 || { echo "Error: No SSH keys loaded in agent"; exit 1; }
 
-          if [ -z "${SSH_AUTH_SOCK:-}" ]; then
-            echo "Error: SSH_AUTH_SOCK is not set. ssh-agent may not be running."
-            exit 1
-          fi
+          # 構建遠端部署腳本內容
+          cat > /tmp/remote_deploy.sh <<'REMOTE_SCRIPT'
+          #!/bin/bash
+          set -euo pipefail
 
-          if ! ssh-add -l >/dev/null 2>&1; then
-            echo "Error: No SSH keys loaded in agent. Previous step must have failed."
-            echo "Attempting to list keys:"
-            ssh-add -l || true
-            exit 1
-          fi
-
-          echo "SSH keys loaded in agent:"
-          ssh-add -l
-
-          # 使用 ssh-agent 中的密鑰，直接使用選項避免陣列展開問題
-          # 移除 IdentitiesOnly=yes 以允許使用 ssh-agent 中的密鑰
-          ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts "${SSH_USER}@${SSH_HOST}" bash -lc "
-            set -euo pipefail
-
-            # 若遠端沒有 deploy.sh，視為首次部署：移入新檔並執行 deploy.sh
-            if [ ! -f ~/deploy.sh ]; then
-              echo 'No existing deploy.sh found. First-time deploy.'
-              mv /tmp/deploy.sh.new ~/deploy.sh
-              chmod +x ~/deploy.sh
-              mv /tmp/update.sh.new ~/update.sh
-              chmod +x ~/update.sh
-              echo 'Running deploy.sh (first-time)...'
-              ~/deploy.sh
-              exit 0
-            fi
-
-            # 有舊 deploy.sh：計算舊檔與新檔的 checksum
-            OLD_SUM=\$(sha256sum ~/deploy.sh | awk '{print \$1}')
-            NEW_SUM=\$(sha256sum /tmp/deploy.sh.new | awk '{print \$1}')
-
-            echo \"Existing deploy.sh checksum: \$OLD_SUM\"
-            echo \"New deploy.sh checksum:      \$NEW_SUM\"
-
-            # 無論如何，先把 update.sh 更新為新版
+          # 首次部署：若遠端沒有 deploy.sh，執行完整部署
+          if [ ! -f ~/deploy.sh ]; then
+            echo 'No existing deploy.sh found. First-time deploy.'
+            mv /tmp/deploy.sh.new ~/deploy.sh
+            chmod +x ~/deploy.sh
             mv /tmp/update.sh.new ~/update.sh
             chmod +x ~/update.sh
+            echo 'Running deploy.sh (first-time)...'
+            ~/deploy.sh
+            exit 0
+          fi
 
-            if [ \"\$OLD_SUM\" = \"\$NEW_SUM\" ]; then
-              echo 'deploy.sh unchanged. Running update.sh...'
-              # 仍確保 deploy.sh 可執行
-              chmod +x ~/deploy.sh
-              ~/update.sh
-            else
-              echo 'deploy.sh changed. Replacing and running deploy.sh...'
-              mv /tmp/deploy.sh.new ~/deploy.sh
-              chmod +x ~/deploy.sh
-              ~/deploy.sh
-            fi
-          "
+          # 計算 checksum 以決定使用 deploy.sh 或 update.sh
+          OLD_SUM=$(sha256sum ~/deploy.sh | awk '{print $1}')
+          NEW_SUM=$(sha256sum /tmp/deploy.sh.new | awk '{print $1}')
+
+          echo "Existing deploy.sh checksum: $OLD_SUM"
+          echo "New deploy.sh checksum:      $NEW_SUM"
+
+          # 無論如何，先把 update.sh 更新為新版
+          mv /tmp/update.sh.new ~/update.sh
+          chmod +x ~/update.sh
+
+          if [ "$OLD_SUM" = "$NEW_SUM" ]; then
+            echo 'deploy.sh unchanged. Running update.sh...'
+            chmod +x ~/deploy.sh
+            ~/update.sh
+          else
+            echo 'deploy.sh changed. Replacing and running deploy.sh...'
+            mv /tmp/deploy.sh.new ~/deploy.sh
+            chmod +x ~/deploy.sh
+            ~/deploy.sh
+          fi
+          REMOTE_SCRIPT
+
+          # 上傳遠端部署腳本並執行
+          scp -P "${SSH_PORT}" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              /tmp/remote_deploy.sh \
+              "${SSH_USER}@${SSH_HOST}:/tmp/remote_deploy.sh"
+
+          # 執行遠端部署腳本
+          ssh -p "${SSH_PORT}" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              "${SSH_USER}@${SSH_HOST}" \
+              "bash /tmp/remote_deploy.sh"
