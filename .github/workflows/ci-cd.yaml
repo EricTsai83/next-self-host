@@ -229,9 +229,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "=========================================="
+          echo "Starting Remote Deployment Execution"
+          echo "=========================================="
+
           # 確保 ssh-agent 環境變數已設置
           export SSH_AUTH_SOCK="${SSH_AUTH_SOCK}"
           export SSH_AGENT_PID="${SSH_AGENT_PID}"
+
+          echo "[DEBUG] SSH_AUTH_SOCK=${SSH_AUTH_SOCK}"
+          echo "[DEBUG] SSH_AGENT_PID=${SSH_AGENT_PID}"
+          echo "[DEBUG] SSH_PORT=${SSH_PORT}"
+          echo "[DEBUG] SSH_USER=${SSH_USER}"
+          echo "[DEBUG] SSH_HOST=${SSH_HOST}"
 
           # 驗證必要的環境變數
           [ -n "${SSH_PORT}" ] || { echo "Error: SSH_PORT is not set"; exit 1; }
@@ -240,47 +250,135 @@ jobs:
           [ -n "${SSH_AUTH_SOCK}" ] || { echo "Error: SSH_AUTH_SOCK is not set"; exit 1; }
 
           # 驗證 SSH key 已載入
-          ssh-add -l >/dev/null 2>&1 || { echo "Error: No SSH keys loaded in agent"; exit 1; }
+          echo "[DEBUG] Checking SSH keys in agent..."
+          if ssh-add -l >/dev/null 2>&1; then
+            echo "[DEBUG] SSH keys loaded:"
+            ssh-add -l
+          else
+            echo "Error: No SSH keys loaded in agent"
+            exit 1
+          fi
 
-          # 執行遠端部署邏輯（直接執行，無需額外腳本文件）
+          # 測試 SSH 連接
+          echo "[DEBUG] Testing SSH connection..."
+          if ssh -p "${SSH_PORT}" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o ConnectTimeout=10 \
+              -o ServerAliveInterval=5 \
+              -o ServerAliveCountMax=3 \
+              "${SSH_USER}@${SSH_HOST}" \
+              "echo 'SSH connection test successful'"; then
+            echo "[DEBUG] SSH connection test passed"
+          else
+            echo "Error: SSH connection test failed"
+            exit 1
+          fi
+
+          # 檢查遠端腳本是否存在
+          echo "[DEBUG] Checking remote script files..."
           ssh -p "${SSH_PORT}" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o ConnectTimeout=10 \
+              -o ServerAliveInterval=5 \
+              -o ServerAliveCountMax=3 \
+              "${SSH_USER}@${SSH_HOST}" \
+              "ls -la /tmp/deploy.sh.new /tmp/update.sh.new 2>&1 || echo 'Script files check completed'"
+
+          # 執行遠端部署邏輯（直接執行，無需額外腳本文件）
+          echo "[DEBUG] Executing remote deployment command..."
+          echo "[DEBUG] Command will run with extended timeout and keepalive settings"
+
+          ssh -p "${SSH_PORT}" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o ConnectTimeout=30 \
+              -o ServerAliveInterval=10 \
+              -o ServerAliveCountMax=12 \
+              -o TCPKeepAlive=yes \
+              -o LogLevel=VERBOSE \
               "${SSH_USER}@${SSH_HOST}" \
               bash -lc "
             set -euo pipefail
 
+            echo '[REMOTE] Starting deployment script execution...'
+            echo '[REMOTE] Current user: \$(whoami)'
+            echo '[REMOTE] Current directory: \$(pwd)'
+            echo '[REMOTE] Home directory: \${HOME}'
+            echo '[REMOTE] Script files check:'
+            ls -la /tmp/deploy.sh.new /tmp/update.sh.new 2>&1 || echo '[REMOTE] Some script files may not exist'
+
             # 首次部署：若遠端沒有 deploy.sh，執行完整部署
             if [ ! -f ~/deploy.sh ]; then
-              echo 'No existing deploy.sh found. First-time deploy.'
-              mv /tmp/deploy.sh.new ~/deploy.sh
-              chmod +x ~/deploy.sh
-              mv /tmp/update.sh.new ~/update.sh
-              chmod +x ~/update.sh
-              echo 'Running deploy.sh (first-time)...'
-              ~/deploy.sh
+              echo '[REMOTE] No existing deploy.sh found. First-time deploy.'
+              echo '[REMOTE] Moving scripts to home directory...'
+              mv /tmp/deploy.sh.new ~/deploy.sh || { echo '[REMOTE] Error: Failed to move deploy.sh.new'; exit 1; }
+              chmod +x ~/deploy.sh || { echo '[REMOTE] Error: Failed to chmod deploy.sh'; exit 1; }
+              mv /tmp/update.sh.new ~/update.sh || { echo '[REMOTE] Error: Failed to move update.sh.new'; exit 1; }
+              chmod +x ~/update.sh || { echo '[REMOTE] Error: Failed to chmod update.sh'; exit 1; }
+              echo '[REMOTE] Running deploy.sh (first-time)...'
+              ~/deploy.sh || { echo '[REMOTE] Error: deploy.sh execution failed'; exit 1; }
+              echo '[REMOTE] First-time deployment completed successfully'
               exit 0
             fi
 
-            # 計算 checksum 以決定使用 deploy.sh 或 update.sh
-            OLD_SUM=\$(sha256sum ~/deploy.sh | awk '{print \$1}')
-            NEW_SUM=\$(sha256sum /tmp/deploy.sh.new | awk '{print \$1}')
+            echo '[REMOTE] Existing deploy.sh found. Checking for changes...'
 
-            echo \"Existing deploy.sh checksum: \$OLD_SUM\"
-            echo \"New deploy.sh checksum:      \$NEW_SUM\"
+            # 計算 checksum 以決定使用 deploy.sh 或 update.sh
+            OLD_SUM=\$(sha256sum ~/deploy.sh 2>/dev/null | awk '{print \$1}' || echo '')
+            NEW_SUM=\$(sha256sum /tmp/deploy.sh.new 2>/dev/null | awk '{print \$1}' || echo '')
+
+            echo '[REMOTE] Existing deploy.sh checksum: '\${OLD_SUM}
+            echo '[REMOTE] New deploy.sh checksum:      '\${NEW_SUM}
+
+            if [ -z \"\${OLD_SUM}\" ] || [ -z \"\${NEW_SUM}\" ]; then
+              echo '[REMOTE] Error: Failed to calculate checksums'
+              exit 1
+            fi
 
             # 無論如何，先把 update.sh 更新為新版
-            mv /tmp/update.sh.new ~/update.sh
-            chmod +x ~/update.sh
+            echo '[REMOTE] Updating update.sh...'
+            mv /tmp/update.sh.new ~/update.sh || { echo '[REMOTE] Error: Failed to move update.sh.new'; exit 1; }
+            chmod +x ~/update.sh || { echo '[REMOTE] Error: Failed to chmod update.sh'; exit 1; }
 
-            if [ \"\$OLD_SUM\" = \"\$NEW_SUM\" ]; then
-              echo 'deploy.sh unchanged. Running update.sh...'
-              chmod +x ~/deploy.sh
-              ~/update.sh
+            if [ \"\${OLD_SUM}\" = \"\${NEW_SUM}\" ]; then
+              echo '[REMOTE] deploy.sh unchanged. Running update.sh...'
+              chmod +x ~/deploy.sh || { echo '[REMOTE] Error: Failed to chmod deploy.sh'; exit 1; }
+              ~/update.sh || { echo '[REMOTE] Error: update.sh execution failed'; exit 1; }
+              echo '[REMOTE] Update completed successfully'
             else
-              echo 'deploy.sh changed. Replacing and running deploy.sh...'
-              mv /tmp/deploy.sh.new ~/deploy.sh
-              chmod +x ~/deploy.sh
-              ~/deploy.sh
+              echo '[REMOTE] deploy.sh changed. Replacing and running deploy.sh...'
+              mv /tmp/deploy.sh.new ~/deploy.sh || { echo '[REMOTE] Error: Failed to move deploy.sh.new'; exit 1; }
+              chmod +x ~/deploy.sh || { echo '[REMOTE] Error: Failed to chmod deploy.sh'; exit 1; }
+              ~/deploy.sh || { echo '[REMOTE] Error: deploy.sh execution failed'; exit 1; }
+              echo '[REMOTE] Deployment completed successfully'
             fi
-          "
+          " || {
+            EXIT_CODE=$?
+            echo "=========================================="
+            echo "Remote Deployment Failed"
+            echo "=========================================="
+            echo "[ERROR] SSH command exited with code: ${EXIT_CODE}"
+            echo "[ERROR] This could be due to:"
+            echo "  - Network connectivity issues"
+            echo "  - SSH connection timeout"
+            echo "  - Remote command execution failure"
+            echo "  - Broken pipe (connection lost during execution)"
+            echo ""
+            echo "[DEBUG] Attempting to diagnose connection..."
+            
+            # 嘗試再次連接以獲取更多信息
+            ssh -p "${SSH_PORT}" \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=~/.ssh/known_hosts \
+                -o ConnectTimeout=5 \
+                "${SSH_USER}@${SSH_HOST}" \
+                "echo 'Connection test after failure'" 2>&1 || echo "[DEBUG] Connection test failed"
+            
+            exit ${EXIT_CODE}
+          }
+
+          echo "=========================================="
+          echo "Remote Deployment Completed Successfully"
+          echo "=========================================="
