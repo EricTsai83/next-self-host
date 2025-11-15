@@ -54,36 +54,80 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "=== 開始準備 SSH key ==="
+
+          echo "[步驟 1/6] 建立 .ssh 目錄..."
           mkdir -p ~/.ssh
+          echo "✓ .ssh 目錄已建立"
+
+          echo "[步驟 2/6] 寫入 SSH 私鑰檔案..."
           SSH_KEY_PATH="$HOME/.ssh/id_deploy_enc"
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$SSH_KEY_PATH"
           chmod 600 "$SSH_KEY_PATH"
+          echo "✓ SSH 私鑰檔案已寫入: $SSH_KEY_PATH"
 
-          # 驗證檔案已建立
-          [ -f "$SSH_KEY_PATH" ] || { echo "Failed to create SSH key file"; exit 1; }
+          echo "[步驟 3/6] 驗證檔案已建立..."
+          if [ -f "$SSH_KEY_PATH" ]; then
+            echo "✓ SSH key 檔案存在，大小: $(stat -f%z "$SSH_KEY_PATH" 2>/dev/null || stat -c%s "$SSH_KEY_PATH" 2>/dev/null || echo "unknown") bytes"
+          else
+            echo "✗ 錯誤: SSH key 檔案不存在"
+            exit 1
+          fi
 
+          echo "[步驟 4/6] 啟動 SSH agent..."
           eval "$(ssh-agent -s)"
+          echo "✓ SSH agent 已啟動，PID: $SSH_AGENT_PID"
 
-          # 安裝 expect（用於非互動式提供 passphrase）
+          echo "[步驟 5/6] 安裝 expect..."
           sudo apt-get update -qq && sudo apt-get install -y -qq expect
+          echo "✓ expect 已安裝"
 
-          # 使用 expect 腳本載入私鑰（使用絕對路徑）
+          echo "[步驟 6/6] 使用 expect 載入 SSH key..."
           expect <<EOF
+          set timeout 30
           spawn ssh-add "$SSH_KEY_PATH"
           expect {
-            "Enter passphrase" { send "$SSH_KEY_PASSPHRASE\r"; exp_continue }
-            "passphrase" { send "$SSH_KEY_PASSPHRASE\r"; exp_continue }
+            "Enter passphrase" {
+              puts "收到 passphrase 提示，正在輸入..."
+              send "$SSH_KEY_PASSPHRASE\r"
+              exp_continue
+            }
+            "passphrase" {
+              puts "收到 passphrase 提示，正在輸入..."
+              send "$SSH_KEY_PASSPHRASE\r"
+              exp_continue
+            }
+            "Identity added" {
+              puts "✓ SSH key 已成功載入"
+              expect eof
+            }
             eof
           }
           catch wait result
-          exit [lindex \$result 3]
+          set exit_code [lindex \$result 3]
+          puts "ssh-add 退出碼: \$exit_code"
+          if {\$exit_code != 0} {
+            puts "✗ 錯誤: ssh-add 失敗，退出碼: \$exit_code"
+            exit \$exit_code
+          }
+          puts "✓ expect 腳本執行成功"
+          exit 0
           EOF
 
-          # 驗證 key 是否成功載入
-          ssh-add -l || { echo "Failed to load SSH key"; exit 1; }
+          echo "[驗證] 檢查 SSH key 是否已載入..."
+          if ssh-add -l; then
+            echo "✓ SSH key 驗證成功，已載入的 key 列表："
+            ssh-add -l
+          else
+            echo "✗ 錯誤: SSH key 驗證失敗，無法列出已載入的 key"
+            exit 1
+          fi
 
-          # 綁定 host 指紋
+          echo "[最後步驟] 綁定 host 指紋..."
           ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+          echo "✓ Host 指紋已加入 known_hosts"
+
+          echo "=== SSH key 準備完成 ==="
 
       - name: Validate local scripts exist
         shell: bash
