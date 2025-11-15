@@ -2,9 +2,7 @@ name: CI
 
 # 觸發條件：任何分支 push 都會跑 build；只有 main 會跑 deploy
 on:
-  push:
-    branches:
-      - "**" # 萬用字元，表示所有分支
+  push: # 不指定 branches 表示匹配所有分支
 
 # 全域環境變數（可視需要調整）
 env:
