@@ -11,7 +11,7 @@
 - [快速開始](#快速開始)
 - [前置需求](#前置需求)
 - [GitHub Actions 設置](#github-actions-設置)
-- [手動部署](#手動部署首次設置)
+- [手動部署](#手動部署)
 - [部署腳本說明](#部署腳本說明)
 - [資料庫設置](#資料庫設置)
 - [本地開發](#本地開發)
@@ -53,7 +53,7 @@
 
 ### 手動部署
 
-如果你偏好手動部署，請參考 [手動部署](#手動部署首次設置) 章節。
+如果你偏好手動部署，請參考 [手動部署](#手動部署) 章節。
 
 ## 前置需求
 
@@ -111,11 +111,9 @@
   - 首次部署：執行 `deploy.sh`（完整環境設置）
   - 更新部署：執行 `update.sh`（更新程式碼並重啟容器）
 
-> **注意**: 
-> - `deploy.sh` 中的網域名稱和 Email 需要根據你的實際情況調整
-> - ⚠️ **Repository 限制**: 目前僅支援 **public repository**。部署腳本會在伺服器上執行 `git clone`/`git pull`，private repository 需要額外的認證設定
+> **注意**: `deploy.sh` 中的網域名稱和 Email 需要根據你的實際情況調整。
 
-## 手動部署（首次設置）
+## 手動部署
 
 如果你想手動進行首次部署，可以按照以下步驟操作：
 
@@ -149,8 +147,6 @@ nano ~/deploy.sh
 - `DOMAIN_NAME`: 你的網域名稱（例如：`example.com`）
 - `EMAIL`: 你的 Email（用於 Let's Encrypt SSL 憑證）
 - `REPO_URL`: 你的 GitHub Repository URL
-  - ⚠️ **限制**: 目前僅支援 **public repository**
-  - 如需使用 private repository，需要修改腳本以支援 GitHub Personal Access Token 或 SSH key 認證
 
 ### 步驟 4: 執行部署腳本
 
@@ -191,7 +187,7 @@ bun run db:studio
 
 ## 本地開發
 
-使用 Docker Compose：
+### 使用 Docker Compose
 
 ```bash
 docker-compose up -d
@@ -199,7 +195,7 @@ docker-compose up -d
 
 Next.js 應用程式將在 `http://localhost:3000` 運行。
 
-或使用 Bun 直接運行：
+### 使用 Bun 直接運行
 
 ```bash
 bun install
@@ -208,17 +204,24 @@ bun run dev
 
 ## 常用指令
 
+### Docker 容器管理
+
 ```bash
-# Docker 容器管理
 docker-compose ps              # 檢查容器狀態
 docker-compose logs web         # 查看日誌
 docker-compose restart web      # 重啟容器
+```
 
-# 伺服器管理
+### 伺服器管理
+
+```bash
 sudo systemctl restart nginx    # 重啟 Nginx
 docker exec -it myapp-web-1 sh  # 進入容器
+```
 
-# 資料庫管理
+### 資料庫管理
+
+```bash
 bun run db:push                 # 推送 schema 變更
 bun run db:studio               # 啟動 Drizzle Studio
 ```
