@@ -64,6 +64,17 @@ SSH_OPTS=(
   -o "ConnectTimeout=30"
 )
 
+# 設置 SCP 選項（scp 使用 -P 大寫來指定端口）
+SCP_OPTS=(
+  -P "${SSH_PORT}"
+  -o "StrictHostKeyChecking=no"
+  -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
+  -o "ServerAliveInterval=10"
+  -o "ServerAliveCountMax=12"
+  -o "TCPKeepAlive=yes"
+  -o "ConnectTimeout=30"
+)
+
 # 檢查是否為首次部署
 echo "[DEBUG] Checking if this is the first deployment..."
 IS_FIRST_DEPLOY=$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "[ -f ~/deploy.sh ] && echo 'no' || echo 'yes'" 2>&1) || {
@@ -79,12 +90,12 @@ fi
 
 # 上傳腳本到遠端
 echo "[DEBUG] Uploading scripts to remote server..."
-if ! scp "${SSH_OPTS[@]}" "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:~/update.sh" 2>&1; then
+if ! scp "${SCP_OPTS[@]}" "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:~/update.sh" 2>&1; then
   echo "::error::Failed to upload update script"
   exit 1
 fi
 
-if ! scp "${SSH_OPTS[@]}" "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:~/deploy.sh" 2>&1; then
+if ! scp "${SCP_OPTS[@]}" "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:~/deploy.sh" 2>&1; then
   echo "::error::Failed to upload deploy script"
   exit 1
 fi
