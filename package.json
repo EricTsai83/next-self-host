@@ -4,7 +4,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "node .next/standalone/server.js",
-    "lint": "eslint",
+    "lint": "next lint",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
@@ -24,7 +24,7 @@
     "@types/react-dom": "^19.0.2",
     "chalk": "^5.4.1",
     "eslint": "^9.39.1",
-    "eslint-config-next": "16.0.3",
+    "eslint-config-next": "15.1.2",
     "typescript": "^5.9.3"
   }
 }
