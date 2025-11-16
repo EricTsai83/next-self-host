@@ -63,7 +63,14 @@ sudo systemctl start docker
 # Clone the Git repository
 if [ -d "$APP_DIR" ]; then
   echo "Directory $APP_DIR already exists. Pulling latest changes..."
-  cd $APP_DIR && git pull
+  cd $APP_DIR
+  # Ensure the remote URL is correct (in case it was cloned from a different repo)
+  CURRENT_REMOTE=$(git remote get-url origin 2>/dev/null || echo "")
+  if [ "$CURRENT_REMOTE" != "$REPO_URL" ]; then
+    echo "Updating remote URL from $CURRENT_REMOTE to $REPO_URL..."
+    git remote set-url origin "$REPO_URL"
+  fi
+  git pull
 else
   echo "Cloning repository from $REPO_URL..."
   git clone $REPO_URL $APP_DIR

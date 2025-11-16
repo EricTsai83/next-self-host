@@ -8,6 +8,12 @@ APP_DIR=~/myapp
 if [ -d "$APP_DIR" ]; then
   echo "Pulling latest changes from the repository..."
   cd $APP_DIR
+  # Ensure the remote URL is correct (in case it was cloned from a different repo)
+  CURRENT_REMOTE=$(git remote get-url origin 2>/dev/null || echo "")
+  if [ "$CURRENT_REMOTE" != "$REPO_URL" ]; then
+    echo "Updating remote URL from $CURRENT_REMOTE to $REPO_URL..."
+    git remote set-url origin "$REPO_URL"
+  fi
   git pull origin main
 else
   echo "Cloning repository from $REPO_URL..."
