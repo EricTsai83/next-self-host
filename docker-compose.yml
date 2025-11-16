@@ -1,8 +1,10 @@
 services:
   web:
+    # 使用當前目錄下的 Dockerfile 構建映像
+    # 這會執行 Dockerfile 中的多階段構建流程（安裝依賴、構建應用、準備生產環境）
     build: .
     ports:
-      - '3000:3000'
+      - "3000:3000"
     environment:
       - NODE_ENV=production
     depends_on:
@@ -17,7 +19,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - '5432:5432'
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
