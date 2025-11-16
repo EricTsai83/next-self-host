@@ -47,7 +47,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
-      # 設置 SSH（使用獨立腳本文件）
+      # 設置 SSH 連線環境
+      # 此步驟會：
+      # 1. 檢查必要的環境變數（SSH_USER, SSH_PORT）和 secrets（SSH_HOST, SSH_PRIVATE_KEY）
+      # 2. 在 ~/.ssh 目錄中建立 SSH 私鑰檔案（id_deploy）並設定正確權限（600）
+      # 3. 使用 ssh-keyscan 將伺服器的 SSH 公鑰加入 known_hosts，避免首次連線時需要手動確認
+      # 4. 啟動 SSH agent 並將私鑰加入 agent，以便後續部署步驟可以透過 SSH 連線到伺服器
+      # 5. 將 SSH_AUTH_SOCK 和 SSH_AGENT_PID 環境變數寫入 $GITHUB_ENV，供後續步驟使用
+      # 6. 如果私鑰有設定 passphrase，會使用 expect 自動輸入密碼
       - name: Setup SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -56,8 +63,19 @@ jobs:
           chmod +x .github/scripts/setup-ssh.sh
           .github/scripts/setup-ssh.sh
 
-      # 執行部署流程（使用獨立腳本文件）
+      # 執行部署流程
+      # 此步驟會：
+      # 1. 驗證必要的環境變數（SSH_USER, SSH_PORT, SSH_HOST, DEPLOY_SCRIPT_PATH, UPDATE_SCRIPT_PATH）
+      # 2. 驗證部署腳本檔案（deploy.sh 和 update.sh）是否存在
+      # 3. 檢查 SSH agent 是否正常運行（SSH_AUTH_SOCK 環境變數，由前一個「Setup SSH」步驟設定）
+      # 4. 測試 SSH 連線到遠端伺服器是否成功
+      # 5. 判斷是否為首次部署（檢查遠端伺服器上是否存在 ~/deploy.sh）
+      # 6. 使用 SCP 將部署腳本（deploy.sh）和更新腳本（update.sh）上傳到遠端伺服器
+      # 7. 根據部署類型執行對應腳本：
+      #    - 首次部署：執行 deploy.sh（包含完整環境設置、Docker 安裝、Nginx 配置、SSL 憑證申請等）
+      #    - 更新部署：執行 update.sh（僅更新程式碼並重啟 Docker 容器）
+      # 8. 驗證部署結果，確保 Docker 容器成功啟動
       - name: Deploy to Server
         run: |
-          chmod +x .github/scripts/deploy.sh
-          .github/scripts/deploy.sh
+          chmod +x .github/scripts/deploy-to-server.sh
+          .github/scripts/deploy-to-server.sh

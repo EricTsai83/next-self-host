@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# 部署腳本：將應用程式部署到遠端伺服器
+# 支援首次部署和更新部署兩種模式
 set -euo pipefail
 
 echo "::group::[DEBUG] Starting deployment process"
@@ -54,28 +56,34 @@ fi
 echo "[DEBUG] SSH connection test passed"
 
 # 設置 SSH 選項（使用數組以確保正確展開）
+# ServerAliveInterval=30: 每 30 秒發送一次保活訊號（對小資源伺服器友善）
+# ServerAliveCountMax=6: 最多允許 6 次保活訊號無回應，超過則斷開連接
+# 總計：連接無回應超過 180 秒（30秒 × 6次）才會斷開，頻率降低但仍有足夠容錯時間
+# 註：保活訊號只是很小的 TCP ACK 包，負擔極小，但降低頻率可進一步減少資源使用
 SSH_OPTS=(
   -p "${SSH_PORT}"
   -o "StrictHostKeyChecking=no"
   -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
-  -o "ServerAliveInterval=10"
-  -o "ServerAliveCountMax=12"
+  -o "ServerAliveInterval=30"
+  -o "ServerAliveCountMax=6"
   -o "TCPKeepAlive=yes"
   -o "ConnectTimeout=30"
 )
 
 # 設置 SCP 選項（scp 使用 -P 大寫來指定端口）
+# ServerAliveInterval/CountMax 作用同 SSH_OPTS，用於保持長時間檔案傳輸連接穩定
 SCP_OPTS=(
   -P "${SSH_PORT}"
   -o "StrictHostKeyChecking=no"
   -o "UserKnownHostsFile=${HOME}/.ssh/known_hosts"
-  -o "ServerAliveInterval=10"
-  -o "ServerAliveCountMax=12"
+  -o "ServerAliveInterval=30"
+  -o "ServerAliveCountMax=6"
   -o "TCPKeepAlive=yes"
   -o "ConnectTimeout=30"
 )
 
 # 檢查是否為首次部署
+# 透過檢查遠端是否存在 deploy.sh 來判斷
 echo "[DEBUG] Checking if this is the first deployment..."
 IS_FIRST_DEPLOY=$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SSH_HOST}" "[ -f ~/deploy.sh ] && echo 'no' || echo 'yes'" 2>&1) || {
   echo "::error::Failed to check deployment status"
@@ -103,6 +111,7 @@ fi
 echo "[DEBUG] Scripts uploaded successfully"
 
 # 執行遠端部署邏輯
+# 首次部署執行 deploy.sh，後續更新執行 update.sh
 echo "[DEBUG] Executing deployment on remote server..."
 if [ "${IS_FIRST_DEPLOY}" = "yes" ]; then
   echo "[DEBUG] Running initial deployment script..."
