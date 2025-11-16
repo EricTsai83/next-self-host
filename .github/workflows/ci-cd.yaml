@@ -96,33 +96,34 @@ jobs:
           # 添加 SSH key（如果有 passphrase 則使用 expect）
           if [ -n "${SSH_KEY_PASSPHRASE:-}" ]; then
             sudo apt-get update -qq && sudo apt-get install -y expect
-            expect <<EOF
-              set timeout 10
-              spawn ssh-add $HOME/.ssh/id_deploy
-              expect {
-                "Enter passphrase" {
-                  send "$SSH_KEY_PASSPHRASE\r"
-                  exp_continue
-                }
-                "Identity added" {
-                  exit 0
-                }
-                eof {
-                  catch wait result
-                  set exit_code [lindex \$result 3]
-                  exit \$exit_code
-                }
-                timeout {
-                  exit 1
-                }
+            cat > /tmp/ssh-add.exp <<EXPECT_EOF
+            set timeout 10
+            spawn ssh-add ~/.ssh/id_deploy
+            expect {
+              "Enter passphrase" {
+                send "\$env(SSH_KEY_PASSPHRASE)\r"
+                exp_continue
               }
-            EOF
-          else
-            ssh-add ~/.ssh/id_deploy
-          fi
+              "Identity added" {
+                exit 0
+              }
+              eof {
+                catch wait result
+                set exit_code [lindex \$result 3]
+                exit \$exit_code
+              }
+              timeout {
+                exit 1
+              }
+            }
+          EXPECT_EOF
+            SSH_KEY_PASSPHRASE="${SSH_KEY_PASSPHRASE}" expect /tmp/ssh-add.exp
+            else
+              ssh-add ~/.ssh/id_deploy
+            fi
 
-          echo "::notice::SSH setup completed successfully"
-          echo "::endgroup::"
+            echo "::notice::SSH setup completed successfully"
+            echo "::endgroup::"
 
       # 上傳腳本並執行部署
       - name: Deploy to Server
