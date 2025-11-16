@@ -20,22 +20,11 @@ jobs:
         with:
           bun-version: latest
 
-      # 安裝依賴（Bun 會自動使用 lockfile 確保一致性）
-      - name: Install Dependencies
-        run: bun install --frozen-lockfile
-
-      # 複製 .env.example 為 .env（用於建置時需要的環境變數）
-      - name: Setup Environment Files
-        run: |
-          find . -type f -name ".env.example" -exec sh -c 'cp "$1" "${1%.*}"' _ {} \;
-
-      # 執行 ESLint 檢查
-      - name: Run Linter
-        run: bun lint
-
-      # 建置 Next.js 應用程式
+      # 執行建置流程（使用獨立腳本文件）
       - name: Build Application
-        run: bun run build
+        run: |
+          chmod +x .github/scripts/build.sh
+          .github/scripts/build.sh
 
   # ============================================
   # Job 2: 部署（僅 main 分支觸發；需 build 成功）
@@ -58,96 +47,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
-      # 設置 SSH（合併多個步驟為一個，減少執行時間）
+      # 設置 SSH（使用獨立腳本文件）
       - name: Setup SSH
         env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_KEY_PASSPHRASE: ${{ secrets.SSH_KEY_PASSPHRASE }}
         run: |
-          set -euo pipefail
+          chmod +x .github/scripts/setup-ssh.sh
+          .github/scripts/setup-ssh.sh
 
-          echo "::group::[DEBUG] Setting up SSH connection"
-
-          # 檢查必要的環境變數和 secrets
-          SSH_PRIVATE_KEY="${{ secrets.SSH_PRIVATE_KEY }}"
-          MISSING_VARS=""
-          [ -z "${SSH_USER:-}" ] && MISSING_VARS="${MISSING_VARS} VAR_SSH_USER"
-          [ -z "${SSH_PORT:-}" ] && MISSING_VARS="${MISSING_VARS} VAR_SSH_PORT"
-          [ -z "${SSH_HOST:-}" ] && MISSING_VARS="${MISSING_VARS} SSH_HOST"
-          [ -z "${SSH_PRIVATE_KEY}" ] && MISSING_VARS="${MISSING_VARS} SSH_PRIVATE_KEY"
-          [ -n "${MISSING_VARS}" ] && { echo "::error::Missing required variables/secrets:${MISSING_VARS}"; exit 1; }
-
-          # 設置 SSH 目錄和權限
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          # 寫入 SSH private key
-          echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-
-          # 添加 known_hosts
-          ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
-          chmod 644 ~/.ssh/known_hosts
-
-          # 啟動 SSH agent 並添加 key
-          eval "$(ssh-agent -s)"
-          echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> $GITHUB_ENV
-          echo "SSH_AGENT_PID=${SSH_AGENT_PID}" >> $GITHUB_ENV
-
-          # 添加 SSH key（如果有 passphrase 則使用 expect）
-          if [ -n "${SSH_KEY_PASSPHRASE:-}" ]; then
-            sudo apt-get update -qq && sudo apt-get install -y expect
-            cat > /tmp/ssh-add.exp <<EXPECT_EOF
-            set timeout 10
-            spawn ssh-add ~/.ssh/id_deploy
-            expect {
-              "Enter passphrase" {
-                send "\$env(SSH_KEY_PASSPHRASE)\r"
-                exp_continue
-              }
-              "Identity added" {
-                exit 0
-              }
-              eof {
-                catch wait result
-                set exit_code [lindex \$result 3]
-                exit \$exit_code
-              }
-              timeout {
-                exit 1
-              }
-            }
-          EXPECT_EOF
-            SSH_KEY_PASSPHRASE="${SSH_KEY_PASSPHRASE}" expect /tmp/ssh-add.exp
-            else
-              ssh-add ~/.ssh/id_deploy
-            fi
-
-            echo "::notice::SSH setup completed successfully"
-            echo "::endgroup::"
-
-      # 上傳腳本並執行部署
+      # 執行部署流程（使用獨立腳本文件）
       - name: Deploy to Server
         run: |
-          set -euo pipefail
-
-          echo "::group::[DEBUG] Starting deployment process"
-
-          # 驗證部署腳本存在
-          [ -f "${DEPLOY_SCRIPT_PATH}" ] || { echo "::error::Deploy script not found at ${DEPLOY_SCRIPT_PATH}"; exit 1; }
-          [ -f "${UPDATE_SCRIPT_PATH}" ] || { echo "::error::Update script not found at ${UPDATE_SCRIPT_PATH}"; exit 1; }
-
-          # 設置 SSH 選項
-          SSH_OPTS="-p ${SSH_PORT} -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts -o ServerAliveInterval=10 -o ServerAliveCountMax=12 -o TCPKeepAlive=yes -o ConnectTimeout=30"
-
-          # 檢查是否為首次部署
-          IS_FIRST_DEPLOY=$(ssh $SSH_OPTS "${SSH_USER}@${SSH_HOST}" "[ -f ~/deploy.sh ] && echo 'no' || echo 'yes'")
-
-          # 上傳腳本到遠端
-          scp $SSH_OPTS "${UPDATE_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:~/update.sh"
-          scp $SSH_OPTS "${DEPLOY_SCRIPT_PATH}" "${SSH_USER}@${SSH_HOST}:~/deploy.sh"
-
-          # 執行遠端部署邏輯
-          ssh $SSH_OPTS "${SSH_USER}@${SSH_HOST}" "chmod +x ~/deploy.sh ~/update.sh && if [ \"$IS_FIRST_DEPLOY\" = 'yes' ]; then ~/deploy.sh; else ~/update.sh; fi"
-
-          echo "::notice::Deployment completed successfully"
-          echo "::endgroup::"
+          chmod +x .github/scripts/deploy.sh
+          .github/scripts/deploy.sh
