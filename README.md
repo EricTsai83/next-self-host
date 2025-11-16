@@ -70,7 +70,7 @@
 
 3. **Linux Ubuntu 伺服器**
    - 推薦使用 [DigitalOcean Droplet](https://www.digitalocean.com/products/droplets)
-   - 建議至少 1GB RAM、1 vCPU
+   - 建議至少 512 MiB RAM、1 vCPU
 
 4. **DNS 設定**（如果使用網域名稱）
    - 建立一個 `A` DNS 記錄，指向你的伺服器 IPv4 位址
